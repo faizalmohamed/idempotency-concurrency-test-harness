@@ -1,28 +1,48 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import MetricCard from '../components/MetricCard';
+import { fetchTestResults } from '../services/api';
 
 export function Dashboard({ orderCount = 0 }) {
+  const [latestRun, setLatestRun] = useState(null);
+
+  useEffect(() => {
+    async function loadLatest() {
+      const history = await fetchTestResults();
+      if (history && history.length > 0) {
+        setLatestRun(history[0]);
+      }
+    }
+    loadLatest();
+  }, []);
+
+  const totalRequests = latestRun ? latestRun.total_requests : 0;
+  const duplicates = latestRun ? latestRun.duplicates : 0;
+  const duplicatesPrevented = latestRun ? latestRun.duplicates_prevented : 0;
+  const conflicts = latestRun ? latestRun.conflicts : 0;
+  const p50 = latestRun ? `${latestRun.latency.p50_ms} ms` : '0 ms';
+  const p95 = latestRun ? `${latestRun.latency.p95_ms} ms` : '0 ms';
+
   const metrics = [
-    { title: 'Requests Sent', value: '0', subtitle: 'Total traffic requests', icon: '🚀', color: 'primary' },
-    { title: 'Unique Operations', value: orderCount.toString(), subtitle: 'Distinct database orders', icon: '✨', color: 'secondary' },
-    { title: 'Duplicates', value: '0', subtitle: 'Unprotected duplicates', icon: '⚠️', color: 'warning' },
-    { title: 'Duplicates Prevented', value: '0', subtitle: 'Idempotency protected', icon: '🛡️', color: 'success' },
-    { title: 'Conflicts', value: '0', subtitle: '409 Payload Mismatches', icon: '⚡', color: 'danger' },
+    { title: 'Requests Sent', value: totalRequests.toString(), subtitle: 'Latest workload batch', icon: '🚀', color: 'primary' },
+    { title: 'Unique Operations', value: orderCount.toString(), subtitle: 'Distinct DB order records', icon: '✨', color: 'secondary' },
+    { title: 'Duplicates', value: duplicates.toString(), subtitle: 'Unprotected duplicates', icon: '⚠️', color: 'warning' },
+    { title: 'Duplicates Prevented', value: duplicatesPrevented.toString(), subtitle: 'Idempotency protected', icon: '🛡️', color: 'success' },
+    { title: 'Conflicts', value: conflicts.toString(), subtitle: '409 Payload Mismatches', icon: '⚡', color: 'danger' },
     { title: 'Overrides', value: '0', subtitle: 'Bypassed locks', icon: '🔑', color: 'purple' },
-    { title: 'Baseline p50', value: '0 ms', subtitle: 'Unprotected latency', icon: '⏱️', color: 'primary' },
-    { title: 'Protected p50', value: '0 ms', subtitle: 'Idempotent latency', icon: '📈', color: 'secondary' }
+    { title: 'p50 Latency', value: p50, subtitle: 'Median batch latency', icon: '⏱️', color: 'primary' },
+    { title: 'p95 Latency', value: p95, subtitle: '95th percentile latency', icon: '📈', color: 'secondary' }
   ];
 
   return (
     <div>
       <div className="phase-banner">
-        <span className="phase-badge">Phase 2 Operational</span>
+        <span className="phase-badge">Phase 3 Live Concurrency Engine</span>
         <div>
           <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
-            Core Idempotency Engine & DB Constraints Active
+            Real Concurrency Testing & Workload Simulator Operational
           </h3>
           <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-            Protected endpoint `POST /orders/v2` enforces mandatory `Idempotency-Key` headers, SHA-256 payload canonicalization, unique database key indexing, and atomic transaction boundaries.
+            The multi-threaded `ThreadPoolExecutor` workload engine is actively firing parallel requests to measure baseline duplicate vulnerabilities versus protected idempotency locks.
           </p>
         </div>
       </div>
@@ -53,7 +73,7 @@ export function Dashboard({ orderCount = 0 }) {
               <span className="badge badge-orange">UNPROTECTED</span>
             </div>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
-              Serves as the naive control group. Every request creates a new order in the SQLite database without checking retries or duplicate payloads.
+              Naive control group. 10 concurrent requests to this endpoint create 10 duplicate order records in SQLite database.
             </p>
           </div>
 
@@ -63,51 +83,7 @@ export function Dashboard({ orderCount = 0 }) {
               <span className="badge badge-green">IDEMPOTENCY + UNIQUE DB LOCK</span>
             </div>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
-              Protected by mandatory `Idempotency-Key` headers, canonical SHA-256 fingerprinting, atomic SQLite transaction boundaries, and unique key database constraints.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Core Idempotency Algorithm Section */}
-      <div className="card-section">
-        <h2 className="section-title">
-          <span>🧠</span> Core Idempotency Algorithm
-        </h2>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem', marginTop: '1rem' }}>
-          <div style={{ background: 'rgba(255, 255, 255, 0.02)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-            <div style={{ color: 'var(--accent-primary)', fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.25rem' }}>
-              1. Key Validation
-            </div>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-              Rejects missing or invalid keys (must be non-empty string &le; 128 chars) with HTTP 400 Bad Request.
-            </p>
-          </div>
-
-          <div style={{ background: 'rgba(255, 255, 255, 0.02)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-            <div style={{ color: 'var(--accent-secondary)', fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.25rem' }}>
-              2. SHA-256 Fingerprint
-            </div>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-              Canonicalizes JSON payloads (sorted keys) to compute deterministic SHA-256 digests.
-            </p>
-          </div>
-
-          <div style={{ background: 'rgba(255, 255, 255, 0.02)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-            <div style={{ color: 'var(--accent-warning)', fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.25rem' }}>
-              3. Conflict Detection
-            </div>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-              Reusing an existing key with altered order payload parameters triggers an HTTP 409 Conflict.
-            </p>
-          </div>
-
-          <div style={{ background: 'rgba(255, 255, 255, 0.02)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-            <div style={{ color: 'var(--accent-success)', fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.25rem' }}>
-              4. Unique DB Constraint
-            </div>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-              SQLite `UNIQUE` index catches concurrent race conditions, rolling back duplicate transactions.
+              Protected by mandatory `Idempotency-Key` headers, SHA-256 fingerprinting, atomic transaction scope, and SQLite `UNIQUE` key constraints. 10 concurrent requests result in exactly 1 order.
             </p>
           </div>
         </div>

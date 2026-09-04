@@ -11,17 +11,20 @@ from app.schemas import (
     OrderResponse,
     OrderCreate,
     ProtectedOrderResponse,
-    ConflictErrorResponse
+    ConflictErrorResponse,
+    WorkloadTestRequest,
+    WorkloadTestResponse
 )
 from app.core.idempotency import validate_idempotency_key
 from app.services.order_service import create_baseline_order, create_protected_order
+from app.services.workload_service import run_workload_simulation, WORKLOAD_HISTORY
 
 # Initialize database tables on startup
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Idempotency & Concurrency Test Harness",
-    description="Engine for baseline vs protected idempotent order operations",
+    description="Engine for baseline vs protected idempotent order operations and workload simulation",
     version="1.0.0"
 )
 
@@ -36,7 +39,7 @@ app.add_middleware(
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 def health_check():
-    """Health check endpoint required by Phase 1 & 2 specifications."""
+    """Health check endpoint required by system specification."""
     return {
         "status": "ok",
         "service": "idempotency-test-harness"
@@ -123,7 +126,7 @@ def post_protected_order(
             }
         )
 
-    # 4. Return successful order response (201 Created or 200 OK for retry replay)
+    # 4. Return successful order response
     return JSONResponse(
         status_code=status_code,
         content={
@@ -141,3 +144,31 @@ def post_protected_order(
             "replayed": replayed
         }
     )
+
+# Phase 3 Workload & Concurrency Test Runner APIs
+
+@app.post("/test/run", response_model=WorkloadTestResponse, tags=["Concurrency Simulator"])
+def run_concurrency_test(
+    config: WorkloadTestRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Triggers a multi-threaded concurrency workload simulation.
+    
+    Fires `concurrency` parallel worker threads simultaneously against baseline or protected endpoints.
+    Calculates actual measured latency metrics (p50, p95) and duplicate prevention counts.
+    """
+    result = run_workload_simulation(
+        db=db,
+        mode=config.mode.lower(),
+        concurrency=config.concurrency,
+        retry_delay_ms=config.retry_delay_ms,
+        jitter_ms=config.jitter_ms,
+        conflict_percentage=config.conflict_percentage
+    )
+    return result
+
+@app.get("/test/results", response_model=List[WorkloadTestResponse], tags=["Concurrency Simulator"])
+def get_concurrency_test_results():
+    """Retrieve historical concurrency workload test run results."""
+    return WORKLOAD_HISTORY

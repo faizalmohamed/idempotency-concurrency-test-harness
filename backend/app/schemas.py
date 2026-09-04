@@ -62,3 +62,43 @@ class AuditLogSchema(BaseModel):
     details: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# Phase 3 Workload & Concurrency Schemas
+
+class WorkloadTestRequest(BaseModel):
+    mode: str = Field("protected", description="Mode: 'baseline' or 'protected'")
+    concurrency: int = Field(10, ge=1, le=50, description="Number of concurrent worker threads")
+    retry_delay_ms: float = Field(0.0, ge=0.0, description="Artificial delay between retries in ms")
+    jitter_ms: float = Field(5.0, ge=0.0, description="Random stagger jitter between worker launches in ms")
+    conflict_percentage: float = Field(0.0, ge=0.0, le=100.0, description="Percentage of requests with altered conflicting payload")
+
+class LatencyMetrics(BaseModel):
+    p50_ms: float
+    p95_ms: float
+    avg_ms: float
+    min_ms: float
+    max_ms: float
+
+class WorkloadErrorCounts(BaseModel):
+    validation_error: int = 0
+    duplicate: int = 0
+    conflict: int = 0
+    timeout: int = 0
+    database_error: int = 0
+    concurrency_error: int = 0
+    unexpected_error: int = 0
+
+class WorkloadTestResponse(BaseModel):
+    run_id: str
+    timestamp: datetime.datetime
+    mode: str
+    total_requests: int
+    unique_logical_operations: int
+    orders_created: int
+    duplicates: int
+    duplicates_prevented: int
+    conflicts: int
+    false_positive_blocks: int
+    latency: LatencyMetrics
+    errors: WorkloadErrorCounts
