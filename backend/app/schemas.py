@@ -27,8 +27,15 @@ class OrderResponse(OrderBase):
 
     model_config = ConfigDict(from_attributes=True)
 
+class EnhancedOrderResponse(OrderResponse):
+    idempotency_key: Optional[str] = None
+    decision: Optional[str] = "ALLOWED"
+    is_duplicate: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
 class ProtectedOrderResponse(BaseModel):
-    order: Optional[OrderResponse] = None
+    order: Optional[EnhancedOrderResponse] = None
     decision: str = Field(..., description="Decision: ALLOWED | RETRIED_AND_MATCHED | BLOCKED_AS_DUPLICATE | BLOCKED_AS_CONFLICT")
     idempotency_key: str
     replayed: bool
@@ -64,11 +71,11 @@ class AuditLogSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-# Phase 3 Workload & Concurrency Schemas
+# Workload & Concurrency Schemas
 
 class WorkloadTestRequest(BaseModel):
     mode: str = Field("protected", description="Mode: 'baseline' or 'protected'")
-    concurrency: int = Field(10, ge=1, le=50, description="Number of concurrent worker threads")
+    concurrency: int = Field(10, ge=1, le=100, description="Number of concurrent worker threads")
     retry_delay_ms: float = Field(0.0, ge=0.0, description="Artificial delay between retries in ms")
     jitter_ms: float = Field(5.0, ge=0.0, description="Random stagger jitter between worker launches in ms")
     conflict_percentage: float = Field(0.0, ge=0.0, le=100.0, description="Percentage of requests with altered conflicting payload")
@@ -102,3 +109,15 @@ class WorkloadTestResponse(BaseModel):
     false_positive_blocks: int
     latency: LatencyMetrics
     errors: WorkloadErrorCounts
+
+
+# Phase 4 System Metrics Schema
+class SystemMetricsResponse(BaseModel):
+    requests_sent: int
+    unique_operations: int
+    baseline_duplicates: int
+    protected_duplicates: int
+    duplicates_prevented: int
+    conflicts: int
+    false_positive_blocks: int
+    manual_overrides: int

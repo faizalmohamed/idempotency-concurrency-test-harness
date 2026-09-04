@@ -15,6 +15,26 @@ export async function fetchHealthStatus() {
   }
 }
 
+export async function fetchMetrics() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/metrics`);
+    if (!res.ok) throw new Error(`Metrics fetch failed with status ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    console.warn('Backend metrics fetch error:', error.message);
+    return {
+      requests_sent: 0,
+      unique_operations: 0,
+      baseline_duplicates: 0,
+      protected_duplicates: 0,
+      duplicates_prevented: 0,
+      conflicts: 0,
+      false_positive_blocks: 0,
+      manual_overrides: 0
+    };
+  }
+}
+
 export async function fetchOrders() {
   try {
     const res = await fetch(`${API_BASE_URL}/orders`);
@@ -23,6 +43,17 @@ export async function fetchOrders() {
   } catch (error) {
     console.warn('Backend orders fetch error:', error.message);
     return [];
+  }
+}
+
+export async function fetchOrderDetails(orderId) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/orders/${orderId}`);
+    if (!res.ok) throw new Error(`Order fetch failed with status ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    console.error('Fetch order details error:', error);
+    throw error;
   }
 }
 

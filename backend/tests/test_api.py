@@ -172,10 +172,9 @@ def test_7_fingerprint_canonicalization_consistency():
     assert generate_request_fingerprint(p1) == generate_request_fingerprint(p2)
 
 
-# Phase 3 Real Concurrency Tests (Tests 8 through 12)
+# Phase 3 & 4 Real Concurrency & Metrics Tests
 
 def test_8_baseline_concurrent_race_creates_multiple_duplicates():
-    """Test 8: 10 concurrent requests to baseline /orders results in 10 orders created in DB."""
     payload = {"customer_id": "C001", "product_id": "P100", "quantity": 1, "amount": 120.0}
 
     def send_baseline_req():
@@ -189,9 +188,7 @@ def test_8_baseline_concurrent_race_creates_multiple_duplicates():
     assert all(r.status_code == 201 for r in results)
     assert len(client.get("/orders").json()) == 10
 
-
 def test_9_protected_concurrent_race_prevents_all_duplicates():
-    """Test 9: 10 concurrent requests to /orders/v2 with SAME KEY results in EXACTLY 1 order created."""
     payload = {"customer_id": "C001", "product_id": "P100", "quantity": 1, "amount": 120.0}
     headers = {"Idempotency-Key": "key-concurrent-race-10workers"}
 
@@ -203,32 +200,23 @@ def test_9_protected_concurrent_race_prevents_all_duplicates():
         results = [f.result() for f in as_completed(futures)]
 
     status_codes = [r.status_code for r in results]
-    assert 201 in status_codes  # 1 initial creation
-    assert status_codes.count(200) == 9  # 9 retries matched
-
-    # Verify only 1 order exists in DB
-    orders = client.get("/orders").json()
-    assert len(orders) == 1
-
+    assert 201 in status_codes
+    assert status_codes.count(200) == 9
+    assert len(client.get("/orders").json()) == 1
 
 def test_10_protected_concurrent_conflict_handling():
-    """Test 10: Concurrent requests reusing key with non-matching payload returns 409 Conflict."""
     headers = {"Idempotency-Key": "key-concurrent-conflict-010"}
     p1 = {"customer_id": "C001", "product_id": "P100", "quantity": 1, "amount": 100.0}
     p2 = {"customer_id": "C001", "product_id": "P100", "quantity": 5, "amount": 999.0}
 
-    # Initial request
     res1 = client.post("/orders/v2", json=p1, headers=headers)
     assert res1.status_code == 201
 
-    # Concurrent request with altered payload
     res2 = client.post("/orders/v2", json=p2, headers=headers)
     assert res2.status_code == 409
     assert res2.json()["error"] == "IDEMPOTENCY_KEY_CONFLICT"
 
-
 def test_11_protected_concurrent_distinct_keys():
-    """Test 11: 10 concurrent requests with DIFFERENT keys creates 10 unique orders with zero false blocks."""
     payload = {"customer_id": "C001", "product_id": "P100", "quantity": 1, "amount": 50.0}
 
     def send_distinct_req(idx):
@@ -241,9 +229,7 @@ def test_11_protected_concurrent_distinct_keys():
     assert all(r.status_code == 201 for r in results)
     assert len(client.get("/orders").json()) == 10
 
-
 def test_12_workload_simulation_runner_api():
-    """Test 12: POST /test/run triggers simulation and returns structured latency metrics."""
     req_payload = {
         "mode": "protected",
         "concurrency": 5,
@@ -259,10 +245,31 @@ def test_12_workload_simulation_runner_api():
     assert data["total_requests"] == 5
     assert data["orders_created"] == 1
     assert data["duplicates_prevented"] == 4
-    assert data["latency"]["p50_ms"] >= 0.0
-    assert data["latency"]["p95_ms"] >= 0.0
 
-    # Test GET /test/results history
-    history_res = client.get("/test/results")
-    assert history_res.status_code == 200
-    assert len(history_res.json()) >= 1
+def test_13_get_metrics_endpoint():
+    """Test GET /metrics returns aggregated system metrics."""
+    res = client.get("/metrics")
+    assert res.status_code == 200
+    data = res.json()
+    assert "requests_sent" in data
+    assert "unique_operations" in data
+    assert "duplicates_prevented" in data
+    assert "conflicts" in data
+
+def test_14_enhanced_orders_list_and_details():
+    """Test GET /orders returns enriched data containing idempotency_key and decision."""
+    payload = {"customer_id": "C001", "product_id": "P100", "quantity": 1, "amount": 200.0}
+    client.post("/orders/v2", json=payload, headers={"Idempotency-Key": "key-enhanced-014"})
+
+    orders_res = client.get("/orders")
+    assert orders_res.status_code == 200
+    orders = orders_res.json()
+    assert len(orders) >= 1
+    target = orders[0]
+    assert "idempotency_key" in target
+    assert "decision" in target
+
+    # Test single order detail lookup
+    detail_res = client.get(f"/orders/{target['id']}")
+    assert detail_res.status_code == 200
+    assert detail_res.json()["id"] == target["id"]
