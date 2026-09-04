@@ -1,0 +1,35 @@
+# Byte-compiled / Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Pytest & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual Environments
+.venv
+env/
+venv/
+
+# SQLite Databases & Harness DBs
+*.db
+*.sqlite
+*.sqlite3
+backend/*.db
+
+# Node dependencies & Vite build outputs
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+.vite/
+*.log
+
+# System & IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
