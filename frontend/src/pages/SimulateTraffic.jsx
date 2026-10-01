@@ -9,6 +9,11 @@ export function SimulateTraffic({ onSimulationRun }) {
   const [conflictPercentage, setConflictPercentage] = useState(0);
   const [clientType, setClientType] = useState('web');
 
+  // Phase 7 Failure & Legacy Client Simulation state
+  const [failureType, setFailureType] = useState('none');
+  const [failureRatePercent, setFailureRatePercent] = useState(0);
+  const [legacyClientPercentage, setLegacyClientPercentage] = useState(0);
+
   // Payload form fields
   const [customerId, setCustomerId] = useState('C001');
   const [productId, setProductId] = useState('P100');
@@ -54,6 +59,9 @@ export function SimulateTraffic({ onSimulationRun }) {
         jitter_ms: parseFloat(jitterMs),
         conflict_percentage: parseFloat(conflictPercentage),
         client_type: clientType,
+        failure_type: failureType,
+        failure_rate_percent: parseFloat(failureRatePercent),
+        legacy_client_percentage: parseFloat(legacyClientPercentage),
         custom_payload: {
           customer_id: customerId,
           product_id: productId,
@@ -63,6 +71,7 @@ export function SimulateTraffic({ onSimulationRun }) {
       };
 
       const result = await runWorkloadSimulation(payloadConfig);
+
       setDispatchedCount(total);
       setLastResult(result);
       await loadHistory();
@@ -205,7 +214,62 @@ export function SimulateTraffic({ onSimulationRun }) {
                 <option value="legacy">Legacy Client</option>
               </select>
             </div>
+
+            {/* Failure Simulation Type (Phase 7) */}
+            <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
+                Failure Injection Mode
+              </label>
+              <select
+                value={failureType}
+                disabled={loading}
+                onChange={(e) => setFailureType(e.target.value)}
+                style={{ width: '100%', padding: '0.55rem', background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff' }}
+              >
+                <option value="none">None (Normal Processing)</option>
+                <option value="timeout">Gateway Timeout (504)</option>
+                <option value="server_error">Internal Server Error (500)</option>
+                <option value="connection_drop">Socket Drop (Partial Failure)</option>
+              </select>
+            </div>
+
+            {/* Failure Rate % (Phase 7) */}
+            <div>
+              <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
+                <span>Failure Rate %</span>
+                <span style={{ color: 'var(--accent-warning)', fontFamily: 'var(--font-mono)' }}>{failureRatePercent}%</span>
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="5"
+                disabled={loading}
+                value={failureRatePercent}
+                onChange={(e) => setFailureRatePercent(parseFloat(e.target.value))}
+                style={{ width: '100%', accentColor: 'var(--accent-warning)' }}
+              />
+            </div>
+
+            {/* Legacy Client Coexistence % (Phase 7) */}
+            <div>
+              <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
+                <span>Legacy Client %</span>
+                <span style={{ color: 'var(--accent-purple)', fontFamily: 'var(--font-mono)' }}>{legacyClientPercentage}%</span>
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                step="5"
+                disabled={loading}
+                value={legacyClientPercentage}
+                onChange={(e) => setLegacyClientPercentage(parseFloat(e.target.value))}
+                style={{ width: '100%', accentColor: 'var(--accent-purple)' }}
+              />
+            </div>
           </div>
+
 
           {/* Structured Order Payload Fields */}
           <div style={{ background: 'rgba(255,255,255,0.02)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>

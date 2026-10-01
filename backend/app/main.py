@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import FastAPI, Depends, Header, HTTPException, status
+from fastapi import FastAPI, Depends, Header, HTTPException, status, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -15,11 +15,26 @@ from app.schemas import (
     ConflictErrorResponse,
     WorkloadTestRequest,
     WorkloadTestResponse,
-    SystemMetricsResponse
+    SystemMetricsResponse,
+    AuditLogSchema,
+    AuditLogListResponse,
+    AdminPurgeRequest,
+    AdminPurgeResponse,
+    AdminKeyOverrideRequest,
+    AdminKeyOverrideResponse,
+    AdminConfigRequest
 )
 from app.core.idempotency import validate_idempotency_key
 from app.services.order_service import create_baseline_order, create_protected_order
 from app.services.workload_service import run_workload_simulation, calculate_system_metrics, WORKLOAD_HISTORY
+from app.services.audit_service import get_audit_logs, log_audit_event
+from app.services.admin_service import (
+    purge_all_test_data,
+    manual_key_override,
+    get_admin_config,
+    set_admin_config
+)
+from app.services.comparison_service import generate_comparison_report, generate_csv_export
 
 # Initialize database tables on startup
 Base.metadata.create_all(bind=engine)
@@ -197,7 +212,89 @@ def post_protected_order(
         }
     )
 
-# Phase 3 & 4 Workload & Concurrency Test Runner APIs
+# Phase 5 Audit Trail & History APIs
+
+@app.get("/audit-logs", response_model=AuditLogListResponse, tags=["Audit Trail"])
+def get_audit_trail_logs(
+    decision_type: Optional[str] = Query(None, description="Filter by decision type"),
+    idempotency_key: Optional[str] = Query(None, description="Filter by idempotency key"),
+    order_id: Optional[int] = Query(None, description="Filter by order ID"),
+    actor: Optional[str] = Query(None, description="Filter by actor/client type"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db)
+):
+    """Retrieve filtered, paginated audit logs for state changes, conflict detections, and overrides."""
+    items, total = get_audit_logs(
+        db=db,
+        decision_type=decision_type,
+        idempotency_key=idempotency_key,
+        order_id=order_id,
+        actor=actor,
+        limit=limit,
+        offset=offset
+    )
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset
+    }
+
+
+@app.get("/audit-logs/{log_id}", response_model=AuditLogSchema, tags=["Audit Trail"])
+def get_audit_log_by_id(log_id: int, db: Session = Depends(get_db)):
+    """Retrieve details for a specific audit log record by ID."""
+    log_entry = db.query(AuditLog).filter(AuditLog.id == log_id).first()
+    if not log_entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Audit log entry with ID {log_id} not found"
+        )
+    return log_entry
+
+# Phase 6 Admin Controls & Purge APIs
+
+@app.post("/admin/purge", response_model=AdminPurgeResponse, tags=["Admin Controls"])
+def purge_test_data(
+    req: AdminPurgeRequest,
+    db: Session = Depends(get_db)
+):
+    """Safely purge test data (all records, orders, idempotency keys, or expired keys)."""
+    res = purge_all_test_data(db=db, target=req.target, ttl_hours=req.ttl_hours or 24)
+    return res
+
+@app.post("/admin/key-override", response_model=AdminKeyOverrideResponse, tags=["Admin Controls"])
+def override_idempotency_key(
+    req: AdminKeyOverrideRequest,
+    db: Session = Depends(get_db)
+):
+    """Manually release or completion-override a locked idempotency key."""
+    res = manual_key_override(
+        db=db,
+        idempotency_key=req.idempotency_key,
+        action=req.action,
+        reason=req.reason or "Manual administrative override"
+    )
+    if res.get("status") == "not_found":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=res["message"])
+    return res
+
+@app.get("/admin/config", tags=["Admin Controls"])
+def fetch_admin_configuration():
+    """Retrieve current global system configuration settings (latency, default TTL)."""
+    return get_admin_config()
+
+@app.post("/admin/config", tags=["Admin Controls"])
+def update_admin_configuration(req: AdminConfigRequest):
+    """Update global system configuration settings."""
+    return set_admin_config(
+        artificial_latency_enabled=req.artificial_latency_enabled,
+        artificial_latency_ms=req.artificial_latency_ms,
+        default_ttl_hours=req.default_ttl_hours
+    )
+
+# Phase 3 & 4 & 7 Workload & Concurrency Test Runner APIs
 
 @app.post("/test/run", response_model=WorkloadTestResponse, tags=["Concurrency Simulator"])
 def run_concurrency_test(
@@ -208,7 +305,7 @@ def run_concurrency_test(
     Triggers a multi-threaded concurrency workload simulation.
     
     Fires `concurrency` parallel worker threads simultaneously against baseline or protected endpoints.
-    Calculates actual measured latency metrics (p50, p95) and duplicate prevention counts.
+    Supports failure injection, legacy client simulation, and conflict injection.
     """
     result = run_workload_simulation(
         db=db,
@@ -216,7 +313,12 @@ def run_concurrency_test(
         concurrency=config.concurrency,
         retry_delay_ms=config.retry_delay_ms,
         jitter_ms=config.jitter_ms,
-        conflict_percentage=config.conflict_percentage
+        conflict_percentage=config.conflict_percentage,
+        client_type=config.client_type or "web",
+        custom_payload=config.custom_payload,
+        failure_rate_percent=config.failure_rate_percent or 0.0,
+        failure_type=config.failure_type or "none",
+        legacy_client_percentage=config.legacy_client_percentage or 0.0
     )
     return result
 
@@ -224,3 +326,23 @@ def run_concurrency_test(
 def get_concurrency_test_results():
     """Retrieve historical concurrency workload test run results."""
     return WORKLOAD_HISTORY
+
+# Phase 8 Comparison & Reporting APIs
+
+@app.get("/comparison/report", tags=["Reporting & Comparison"])
+def get_comparison_analytics(db: Session = Depends(get_db)):
+    """Generate comprehensive comparison analytics between Baseline and Protected test runs."""
+    return generate_comparison_report(db)
+
+@app.get("/comparison/export", tags=["Reporting & Comparison"])
+def export_comparison_csv(db: Session = Depends(get_db)):
+    """Export benchmark test results as downloadable CSV data."""
+    csv_content = generate_csv_export(db)
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=idempotency_benchmark_results.csv"
+        }
+    )
+

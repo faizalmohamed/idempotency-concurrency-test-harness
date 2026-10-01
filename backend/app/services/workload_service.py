@@ -5,11 +5,13 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Tuple
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import Order, IdempotencyRecord, AuditLog
 from app.services.order_service import create_baseline_order, create_protected_order
+from app.services.failure_service import inject_failure_if_configured, handle_legacy_client_fallback, ConnectionDropException
 from app.schemas import WorkloadTestResponse, LatencyMetrics, WorkloadErrorCounts, SystemMetricsResponse
 
 # Global in-memory history of workload test executions
@@ -35,7 +37,11 @@ def execute_single_worker_request(
     idempotency_key: str,
     payload: Dict[str, Any],
     stagger_ms: float = 0.0,
-    client_type: str = "web"
+    client_type: str = "web",
+    failure_type: str = "none",
+    failure_rate_percent: float = 0.0,
+    worker_index: int = 0,
+    is_legacy: bool = False
 ) -> Dict[str, Any]:
     """
     Executes a single order creation request inside a dedicated thread with its own DB session.
@@ -51,7 +57,18 @@ def execute_single_worker_request(
     error_cat = None
 
     try:
-        if mode == "baseline":
+        inject_failure_if_configured(
+            failure_type=failure_type,
+            failure_rate_percent=failure_rate_percent,
+            worker_index=worker_index
+        )
+
+        if is_legacy:
+            order = handle_legacy_client_fallback(db=db, payload=payload, client_type="legacy")
+            order_id = order.id
+            decision = "ALLOWED"
+            status_code = 201
+        elif mode == "baseline":
             order = create_baseline_order(db=db, payload=payload, client_type=client_type)
             order_id = order.id
             decision = "ALLOWED"
@@ -68,6 +85,19 @@ def execute_single_worker_request(
             if status_code == 409:
                 error_cat = "conflict"
 
+    except HTTPException as http_exc:
+        db.rollback()
+        status_code = http_exc.status_code
+        decision = "SIMULATED_FAILURE"
+        if http_exc.status_code == 504:
+            error_cat = "timeout"
+        else:
+            error_cat = "database_error"
+    except ConnectionDropException:
+        db.rollback()
+        status_code = 503
+        decision = "SIMULATED_FAILURE"
+        error_cat = "timeout"
     except Exception as exc:
         db.rollback()
         status_code = 500
@@ -96,7 +126,10 @@ def run_workload_simulation(
     jitter_ms: float = 5.0,
     conflict_percentage: float = 0.0,
     client_type: str = "web",
-    custom_payload: Dict[str, Any] = None
+    custom_payload: Dict[str, Any] = None,
+    failure_rate_percent: float = 0.0,
+    failure_type: str = "none",
+    legacy_client_percentage: float = 0.0
 ) -> WorkloadTestResponse:
     """
     Executes a genuine multi-threaded concurrency workload test.
@@ -125,6 +158,8 @@ def run_workload_simulation(
             if conflict_percentage > 0 and (i / concurrency * 100.0) < conflict_percentage and i > 0:
                 worker_payload["amount"] = float(base_payload.get("amount", 100.0)) + ((i + 1) * 10.0)
 
+            is_legacy = (legacy_client_percentage > 0) and ((i / concurrency * 100.0) < legacy_client_percentage)
+
             futures.append(
                 executor.submit(
                     execute_single_worker_request,
@@ -132,7 +167,11 @@ def run_workload_simulation(
                     idempotency_key=base_idempotency_key,
                     payload=worker_payload,
                     stagger_ms=stagger,
-                    client_type=client_type
+                    client_type=client_type,
+                    failure_type=failure_type,
+                    failure_rate_percent=failure_rate_percent,
+                    worker_index=i,
+                    is_legacy=is_legacy
                 )
             )
 
@@ -205,6 +244,7 @@ def calculate_system_metrics(db: Session) -> SystemMetricsResponse:
     total_orders = db.query(Order).count()
     idemp_records = db.query(IdempotencyRecord).count()
     audit_conflicts = db.query(AuditLog).filter(AuditLog.decision_type == "PAYLOAD_CONFLICT").count()
+    manual_overrides = db.query(AuditLog).filter(AuditLog.decision_type == "MANUAL_OVERRIDE").count()
 
     total_requests_sent = sum(run.get("total_requests", 0) for run in WORKLOAD_HISTORY)
     if total_requests_sent == 0:
@@ -227,5 +267,6 @@ def calculate_system_metrics(db: Session) -> SystemMetricsResponse:
         duplicates_prevented=duplicates_prevented,
         conflicts=conflicts,
         false_positive_blocks=0,
-        manual_overrides=0
+        manual_overrides=manual_overrides
     )
+

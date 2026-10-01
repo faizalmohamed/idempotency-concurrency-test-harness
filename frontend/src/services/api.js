@@ -87,3 +87,108 @@ export async function fetchTestResults() {
     return [];
   }
 }
+
+export async function fetchAuditLogs(filters = {}) {
+  try {
+    const query = new URLSearchParams();
+    if (filters.decision_type) query.append('decision_type', filters.decision_type);
+    if (filters.idempotency_key) query.append('idempotency_key', filters.idempotency_key);
+    if (filters.order_id) query.append('order_id', filters.order_id);
+    if (filters.actor) query.append('actor', filters.actor);
+    if (filters.limit) query.append('limit', filters.limit);
+    if (filters.offset) query.append('offset', filters.offset);
+
+    const res = await fetch(`${API_BASE_URL}/audit-logs?${query.toString()}`);
+    if (!res.ok) throw new Error(`Audit logs fetch failed with status ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    console.warn('Fetch audit logs error:', error.message);
+    return { items: [], total: 0, limit: 50, offset: 0 };
+  }
+}
+
+export async function fetchAuditLogDetails(logId) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/audit-logs/${logId}`);
+    if (!res.ok) throw new Error(`Audit log detail fetch failed with status ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    console.error('Fetch audit log details error:', error);
+    throw error;
+  }
+}
+
+export async function purgeTestData(target = 'all', ttlHours = 24) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/admin/purge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target, ttl_hours: ttlHours })
+    });
+    if (!res.ok) throw new Error(`Purge request failed with status ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    console.error('Purge test data API error:', error);
+    throw error;
+  }
+}
+
+export async function manualKeyOverride(idempotencyKey, action = 'release', reason = 'Manual UI override') {
+  try {
+    const res = await fetch(`${API_BASE_URL}/admin/key-override`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idempotency_key: idempotencyKey, action, reason })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Key override failed');
+    }
+    return await res.json();
+  } catch (error) {
+    console.error('Manual key override API error:', error);
+    throw error;
+  }
+}
+
+export async function fetchAdminConfig() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/admin/config`);
+    if (!res.ok) throw new Error(`Admin config fetch failed with status ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    console.warn('Fetch admin config error:', error.message);
+    return { artificial_latency_enabled: false, artificial_latency_ms: 100, default_ttl_hours: 24 };
+  }
+}
+
+export async function updateAdminConfig(config) {
+  try {
+    const res = await fetch(`${API_BASE_URL}/admin/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config)
+    });
+    if (!res.ok) throw new Error(`Update config failed with status ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    console.error('Update admin config API error:', error);
+    throw error;
+  }
+}
+
+export async function fetchComparisonReport() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/comparison/report`);
+    if (!res.ok) throw new Error(`Comparison report fetch failed with status ${res.status}`);
+    return await res.json();
+  } catch (error) {
+    console.warn('Fetch comparison report error:', error.message);
+    return null;
+  }
+}
+
+export function getComparisonCSVDownloadUrl() {
+  return `${API_BASE_URL}/comparison/export`;
+}
+

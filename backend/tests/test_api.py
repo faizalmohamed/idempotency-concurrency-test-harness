@@ -273,3 +273,119 @@ def test_14_enhanced_orders_list_and_details():
     detail_res = client.get(f"/orders/{target['id']}")
     assert detail_res.status_code == 200
     assert detail_res.json()["id"] == target["id"]
+
+
+# Phase 5-8 New Feature Tests
+
+def test_15_audit_logs_retrieval_and_filtering():
+    """Verify GET /audit-logs returns items and supports decision_type filtering."""
+    payload = {"customer_id": "C001", "product_id": "P100", "quantity": 1, "amount": 80.0}
+    client.post("/orders/v2", json=payload, headers={"Idempotency-Key": "key-audit-015"})
+
+    res = client.get("/audit-logs")
+    assert res.status_code == 200
+    data = res.json()
+    assert "items" in data
+    assert "total" in data
+    assert len(data["items"]) >= 1
+
+    # Filter by decision_type
+    filtered_res = client.get("/audit-logs?decision_type=NEW_ORDER_CREATED_PROTECTED")
+    assert filtered_res.status_code == 200
+    filtered_data = filtered_res.json()
+    assert all(item["decision_type"] == "NEW_ORDER_CREATED_PROTECTED" for item in filtered_data["items"])
+
+def test_16_audit_log_details_by_id():
+    """Verify GET /audit-logs/{id} returns details for a specific log entry."""
+    payload = {"customer_id": "C001", "product_id": "P100", "quantity": 1, "amount": 75.0}
+    client.post("/orders/v2", json=payload, headers={"Idempotency-Key": "key-audit-detail-016"})
+
+    logs = client.get("/audit-logs").json()["items"]
+    target_id = logs[0]["id"]
+
+    res = client.get(f"/audit-logs/{target_id}")
+    assert res.status_code == 200
+    assert res.json()["id"] == target_id
+
+def test_17_admin_config_get_and_set():
+    """Verify GET and POST /admin/config updates system latency settings."""
+    get_res = client.get("/admin/config")
+    assert get_res.status_code == 200
+    assert "artificial_latency_enabled" in get_res.json()
+
+    set_res = client.post("/admin/config", json={
+        "artificial_latency_enabled": True,
+        "artificial_latency_ms": 50,
+        "default_ttl_hours": 48
+    })
+    assert set_res.status_code == 200
+    assert set_res.json()["artificial_latency_enabled"] is True
+    assert set_res.json()["artificial_latency_ms"] == 50
+
+    # Reset config back
+    client.post("/admin/config", json={"artificial_latency_enabled": False})
+
+def test_18_admin_purge_test_data():
+    """Verify POST /admin/purge deletes all test data when requested."""
+    payload = {"customer_id": "C001", "product_id": "P100", "quantity": 1, "amount": 90.0}
+    client.post("/orders/v2", json=payload, headers={"Idempotency-Key": "key-purge-018"})
+    assert len(client.get("/orders").json()) >= 1
+
+    purge_res = client.post("/admin/purge", json={"target": "all"})
+    assert purge_res.status_code == 200
+    assert purge_res.json()["purged_records"] > 0
+    assert len(client.get("/orders").json()) == 0
+
+def test_19_admin_key_override_release():
+    """Verify POST /admin/key-override releases locked idempotency key."""
+    payload = {"customer_id": "C001", "product_id": "P100", "quantity": 1, "amount": 100.0}
+    key = "key-override-019"
+    client.post("/orders/v2", json=payload, headers={"Idempotency-Key": key})
+
+    override_res = client.post("/admin/key-override", json={
+        "idempotency_key": key,
+        "action": "release",
+        "reason": "Unlocking stuck state"
+    })
+    assert override_res.status_code == 200
+    assert override_res.json()["status"] == "success"
+    assert override_res.json()["new_status"] == "RELEASED"
+
+    # Subsequent request with same key can now create a new order instead of replay!
+    res_after = client.post("/orders/v2", json=payload, headers={"Idempotency-Key": key})
+    assert res_after.status_code == 201
+
+def test_20_failure_simulation_runner():
+    """Verify POST /test/run with failure injection records failure statistics."""
+    req_payload = {
+        "mode": "protected",
+        "concurrency": 4,
+        "retry_delay_ms": 0,
+        "jitter_ms": 1,
+        "conflict_percentage": 0,
+        "failure_rate_percent": 100.0,
+        "failure_type": "timeout"
+    }
+    res = client.post("/test/run", json=req_payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["errors"]["timeout"] > 0
+
+def test_21_comparison_report_analytics():
+    """Verify GET /comparison/report calculates duplicate prevention rate and latency metrics."""
+    res = client.get("/comparison/report")
+    assert res.status_code == 200
+    data = res.json()
+    assert "summary" in data
+    assert "baseline" in data
+    assert "protected" in data
+    assert "overhead_analysis" in data
+    assert "duplicate_prevention_rate_percent" in data["summary"]
+
+def test_22_comparison_csv_export():
+    """Verify GET /comparison/export returns downloadable CSV content."""
+    res = client.get("/comparison/export")
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "text/csv; charset=utf-8"
+    assert "Run ID,Timestamp,Mode" in res.text
+

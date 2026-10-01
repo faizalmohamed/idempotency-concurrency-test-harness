@@ -70,6 +70,44 @@ class AuditLogSchema(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+class AuditLogListResponse(BaseModel):
+    items: List[AuditLogSchema]
+    total: int
+    limit: int
+    offset: int
+
+
+# Phase 6 Admin Control Schemas
+
+class AdminPurgeRequest(BaseModel):
+    target: str = Field("all", description="Target: 'all', 'orders', 'idempotency_keys', 'expired_keys'")
+    ttl_hours: Optional[int] = Field(24, ge=1, le=720)
+
+class AdminPurgeResponse(BaseModel):
+    purged_records: int
+    purged_orders: Optional[int] = 0
+    purged_idempotency_records: Optional[int] = 0
+    purged_audit_logs: Optional[int] = 0
+    message: str
+
+class AdminKeyOverrideRequest(BaseModel):
+    idempotency_key: str
+    action: str = Field("release", description="Action: 'release' or 'force_complete'")
+    reason: Optional[str] = "Manual administrative override"
+
+class AdminKeyOverrideResponse(BaseModel):
+    status: str
+    key: str
+    action: Optional[str] = None
+    old_status: Optional[str] = None
+    new_status: Optional[str] = None
+    message: str
+
+class AdminConfigRequest(BaseModel):
+    artificial_latency_enabled: Optional[bool] = None
+    artificial_latency_ms: Optional[int] = Field(None, ge=0, le=5000)
+    default_ttl_hours: Optional[int] = Field(None, ge=1, le=720)
+
 
 # Workload & Concurrency Schemas
 
@@ -79,6 +117,11 @@ class WorkloadTestRequest(BaseModel):
     retry_delay_ms: float = Field(0.0, ge=0.0, description="Artificial delay between retries in ms")
     jitter_ms: float = Field(5.0, ge=0.0, description="Random stagger jitter between worker launches in ms")
     conflict_percentage: float = Field(0.0, ge=0.0, le=100.0, description="Percentage of requests with altered conflicting payload")
+    client_type: Optional[str] = "web"
+    custom_payload: Optional[Dict[str, Any]] = None
+    failure_rate_percent: Optional[float] = Field(0.0, ge=0.0, le=100.0)
+    failure_type: Optional[str] = Field("none", description="'none', 'timeout', 'server_error', 'connection_drop'")
+    legacy_client_percentage: Optional[float] = Field(0.0, ge=0.0, le=100.0)
 
 class LatencyMetrics(BaseModel):
     p50_ms: float
@@ -111,7 +154,6 @@ class WorkloadTestResponse(BaseModel):
     errors: WorkloadErrorCounts
 
 
-# Phase 4 System Metrics Schema
 class SystemMetricsResponse(BaseModel):
     requests_sent: int
     unique_operations: int
