@@ -39,8 +39,7 @@ def purge_expired_idempotency_records(db: Session, ttl_hours: int = 24) -> int:
     """
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=ttl_hours)
     expired_query = db.query(IdempotencyRecord).filter(
-        IdempotencyRecord.created_at < cutoff,
-        IdempotencyRecord.status == "COMPLETED"
+        IdempotencyRecord.created_at < cutoff
     )
     count = expired_query.count()
     expired_query.delete(synchronize_session=False)

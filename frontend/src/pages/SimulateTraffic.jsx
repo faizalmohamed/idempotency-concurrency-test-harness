@@ -43,8 +43,7 @@ export function SimulateTraffic({ onSimulationRun }) {
     setErrorMsg(null);
     setDispatchedCount(0);
 
-    // Simulate progress ticker during execution
-    const total = parseInt(concurrency, 10);
+    const total = parseInt(concurrency, 10) || 10;
     let current = 0;
     const ticker = setInterval(() => {
       current = Math.min(total, current + Math.ceil(total / 5));
@@ -55,18 +54,18 @@ export function SimulateTraffic({ onSimulationRun }) {
       const payloadConfig = {
         mode,
         concurrency: total,
-        retry_delay_ms: parseFloat(retryDelayMs),
-        jitter_ms: parseFloat(jitterMs),
-        conflict_percentage: parseFloat(conflictPercentage),
+        retry_delay_ms: parseFloat(retryDelayMs) || 0.0,
+        jitter_ms: parseFloat(jitterMs) || 0.0,
+        conflict_percentage: parseFloat(conflictPercentage) || 0.0,
         client_type: clientType,
         failure_type: failureType,
-        failure_rate_percent: parseFloat(failureRatePercent),
-        legacy_client_percentage: parseFloat(legacyClientPercentage),
+        failure_rate_percent: parseFloat(failureRatePercent) || 0.0,
+        legacy_client_percentage: parseFloat(legacyClientPercentage) || 0.0,
         custom_payload: {
           customer_id: customerId,
           product_id: productId,
-          quantity: parseInt(quantity, 10),
-          amount: parseFloat(amount)
+          quantity: parseInt(quantity, 10) || 1,
+          amount: parseFloat(amount) || 100.0
         }
       };
 
@@ -87,13 +86,13 @@ export function SimulateTraffic({ onSimulationRun }) {
   return (
     <div>
       <div className="phase-banner">
-        <span className="phase-badge">Phase 4 Live Simulator</span>
+        <span className="phase-badge">Phase 7 Live Simulator</span>
         <div>
           <h3 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
-            Workload & Concurrency Traffic Simulator
+            Workload, Concurrency & Failure Traffic Simulator
           </h3>
           <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-            Fires parallel multi-threaded HTTP/DB worker requests. Evaluates unprotected baseline duplicate vulnerabilities versus idempotency-protected unique locks in real time.
+            Fires parallel multi-threaded HTTP/DB worker requests. Evaluates unprotected baseline duplicate vulnerabilities vs idempotency-protected unique locks, network drops, and legacy coexistence.
           </p>
         </div>
       </div>
@@ -218,7 +217,7 @@ export function SimulateTraffic({ onSimulationRun }) {
             {/* Failure Simulation Type (Phase 7) */}
             <div>
               <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
-                Failure Injection Mode
+                Failure Type
               </label>
               <select
                 value={failureType}
@@ -226,17 +225,17 @@ export function SimulateTraffic({ onSimulationRun }) {
                 onChange={(e) => setFailureType(e.target.value)}
                 style={{ width: '100%', padding: '0.55rem', background: 'var(--bg-surface-elevated)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', color: '#fff' }}
               >
-                <option value="none">None (Normal Processing)</option>
-                <option value="timeout">Gateway Timeout (504)</option>
-                <option value="server_error">Internal Server Error (500)</option>
-                <option value="connection_drop">Socket Drop (Partial Failure)</option>
+                <option value="none">None</option>
+                <option value="timeout">Timeout</option>
+                <option value="server_error">Server Error</option>
+                <option value="connection_drop">Connection Drop</option>
               </select>
             </div>
 
             {/* Failure Rate % (Phase 7) */}
             <div>
               <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
-                <span>Failure Rate %</span>
+                <span>Failure Rate</span>
                 <span style={{ color: 'var(--accent-warning)', fontFamily: 'var(--font-mono)' }}>{failureRatePercent}%</span>
               </label>
               <input
@@ -246,7 +245,7 @@ export function SimulateTraffic({ onSimulationRun }) {
                 step="5"
                 disabled={loading}
                 value={failureRatePercent}
-                onChange={(e) => setFailureRatePercent(parseFloat(e.target.value))}
+                onChange={(e) => setFailureRatePercent(parseFloat(e.target.value) || 0)}
                 style={{ width: '100%', accentColor: 'var(--accent-warning)' }}
               />
             </div>
@@ -264,12 +263,11 @@ export function SimulateTraffic({ onSimulationRun }) {
                 step="5"
                 disabled={loading}
                 value={legacyClientPercentage}
-                onChange={(e) => setLegacyClientPercentage(parseFloat(e.target.value))}
+                onChange={(e) => setLegacyClientPercentage(parseFloat(e.target.value) || 0)}
                 style={{ width: '100%', accentColor: 'var(--accent-purple)' }}
               />
             </div>
           </div>
-
 
           {/* Structured Order Payload Fields */}
           <div style={{ background: 'rgba(255,255,255,0.02)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
@@ -326,6 +324,16 @@ export function SimulateTraffic({ onSimulationRun }) {
             </div>
           </div>
 
+          {/* Configuration Preview Badge Bar */}
+          <div style={{ background: 'rgba(99, 102, 241, 0.06)', border: '1px solid rgba(99, 102, 241, 0.25)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-md)', fontSize: '0.8rem', display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center' }}>
+            <span style={{ fontWeight: 700, color: 'var(--accent-primary)' }}>Selected Configuration:</span>
+            <span className={`badge ${mode === 'protected' ? 'badge-green' : 'badge-orange'}`}>{mode.toUpperCase()}</span>
+            <span className="badge badge-blue">{concurrency} Workers</span>
+            <span className="badge badge-purple">{failureType !== 'none' ? `${failureType} (${failureRatePercent}%)` : 'No Failure Injection'}</span>
+            <span className="badge badge-gray">{legacyClientPercentage > 0 ? `Legacy: ${legacyClientPercentage}%` : 'Standard Client'}</span>
+            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>${amount} ({customerId})</span>
+          </div>
+
           {/* Action Button & Running Status Ticker */}
           <div>
             <button
@@ -334,7 +342,7 @@ export function SimulateTraffic({ onSimulationRun }) {
               className="nav-link"
               style={{
                 width: '100%',
-                justify: 'center',
+                justifyContent: 'center',
                 background: loading ? 'var(--border-color)' : 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))',
                 color: '#fff',
                 fontWeight: 700,
@@ -366,58 +374,86 @@ export function SimulateTraffic({ onSimulationRun }) {
             </span>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', marginTop: '1rem' }}>
-            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Requests Sent</div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{lastResult.total_requests}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '1rem', marginTop: '1rem' }}>
+            
+            {/* Total Requests */}
+            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.85rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Total Requests</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{lastResult.total_requests}</div>
             </div>
 
-            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Unique Operations</div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--accent-secondary)' }}>{lastResult.unique_logical_operations}</div>
-            </div>
-
-            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Orders Created</div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: lastResult.orders_created > 1 && lastResult.mode === 'baseline' ? 'var(--accent-warning)' : 'var(--accent-success)' }}>
-                {lastResult.orders_created}
+            {/* Successful Requests */}
+            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.85rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Successful Requests</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--accent-success)' }}>
+                {lastResult.successful_requests !== undefined ? lastResult.successful_requests : lastResult.orders_created}
               </div>
             </div>
 
-            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Duplicates Created</div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: lastResult.duplicates > 0 ? 'var(--accent-danger)' : 'var(--text-primary)' }}>
-                {lastResult.duplicates}
+            {/* Failures */}
+            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.85rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Failures</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: lastResult.failures > 0 ? 'var(--accent-danger)' : 'var(--text-primary)' }}>
+                {lastResult.failures || 0}
               </div>
             </div>
 
-            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Duplicates Prevented</div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--accent-success)' }}>
-                {lastResult.duplicates_prevented}
+            {/* Retries */}
+            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.85rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Retries</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--accent-primary)' }}>
+                {lastResult.retries !== undefined ? lastResult.retries : lastResult.duplicates_prevented}
               </div>
             </div>
 
-            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Conflicts Flagged</div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--accent-warning)' }}>
+            {/* Replay Count */}
+            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.85rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Replay Count</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--accent-secondary)' }}>
+                {lastResult.replay_count !== undefined ? lastResult.replay_count : lastResult.duplicates_prevented}
+              </div>
+            </div>
+
+            {/* Conflicts */}
+            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.85rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Conflicts</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--accent-warning)' }}>
                 {lastResult.conflicts}
               </div>
             </div>
 
-            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>False Positive Blocks</div>
-              <div style={{ fontSize: '1.5rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--accent-purple)' }}>
-                {lastResult.false_positive_blocks}
+            {/* Legacy Requests */}
+            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.85rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Legacy Requests</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--accent-purple)' }}>
+                {lastResult.legacy_requests || 0}
               </div>
             </div>
 
-            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+            {/* Orders Created */}
+            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.85rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Orders Created</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
+                {lastResult.orders_created}
+              </div>
+            </div>
+
+            {/* Duplicates Created */}
+            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.85rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Duplicates Created</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: lastResult.duplicates > 0 ? 'var(--accent-danger)' : 'var(--accent-success)' }}>
+                {lastResult.duplicates}
+              </div>
+            </div>
+
+            {/* Latency */}
+            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.85rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)' }}>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>p50 / p95 Latency</div>
-              <div style={{ fontSize: '1.25rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--accent-primary)' }}>
+              <div style={{ fontSize: '1.15rem', fontWeight: 700, fontFamily: 'var(--font-mono)', color: 'var(--accent-primary)' }}>
                 {lastResult.latency.p50_ms}ms / {lastResult.latency.p95_ms}ms
               </div>
             </div>
+
           </div>
         </div>
       )}

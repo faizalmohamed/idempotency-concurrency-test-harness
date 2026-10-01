@@ -44,6 +44,17 @@ def generate_comparison_report(db: Session) -> Dict[str, Any]:
     total_all_requests = b_requests + p_requests
     conflict_rate_pct = round((p_conflicts / total_all_requests * 100.0), 2) if total_all_requests > 0 else 0.0
 
+    b_throughputs = [r.get("throughput_req_sec", 0.0) for r in baseline_runs if r.get("throughput_req_sec", 0.0) > 0]
+    p_throughputs = [r.get("throughput_req_sec", 0.0) for r in protected_runs if r.get("throughput_req_sec", 0.0) > 0]
+    b_throughput_avg = round(sum(b_throughputs) / len(b_throughputs), 2) if b_throughputs else 0.0
+    p_throughput_avg = round(sum(p_throughputs) / len(p_throughputs), 2) if p_throughputs else 0.0
+    throughput_delta = round(p_throughput_avg - b_throughput_avg, 2)
+
+    total_timeouts = sum(r.get("errors", {}).get("timeout", 0) for r in WORKLOAD_HISTORY)
+    total_server_errors = sum(r.get("errors", {}).get("server_error", 0) or r.get("errors", {}).get("database_error", 0) for r in WORKLOAD_HISTORY)
+    total_connection_drops = sum(r.get("errors", {}).get("connection_drop", 0) for r in WORKLOAD_HISTORY)
+    total_unexpected = sum(r.get("errors", {}).get("unexpected_error", 0) for r in WORKLOAD_HISTORY)
+
     return {
         "timestamp": datetime.datetime.utcnow().isoformat(),
         "summary": {
@@ -51,11 +62,17 @@ def generate_comparison_report(db: Session) -> Dict[str, Any]:
             "total_benchmark_runs": len(WORKLOAD_HISTORY),
             "total_requests_processed": total_all_requests
         },
+        "throughput": {
+            "baseline_req_sec": b_throughput_avg,
+            "protected_req_sec": p_throughput_avg,
+            "delta_req_sec": throughput_delta
+        },
         "baseline": {
             "total_requests": b_requests,
             "orders_created": b_orders,
             "duplicates_created": b_duplicates,
             "prevention_rate_percent": 0.0,
+            "throughput_req_sec": b_throughput_avg,
             "latency": {
                 "p50_ms": b_p50_avg,
                 "p95_ms": b_p95_avg
@@ -68,6 +85,7 @@ def generate_comparison_report(db: Session) -> Dict[str, Any]:
             "duplicates_prevented": p_prevented,
             "conflicts_flagged": p_conflicts,
             "prevention_rate_percent": prevention_rate_pct,
+            "throughput_req_sec": p_throughput_avg,
             "latency": {
                 "p50_ms": p_p50_avg,
                 "p95_ms": p_p95_avg
@@ -76,16 +94,17 @@ def generate_comparison_report(db: Session) -> Dict[str, Any]:
         "overhead_analysis": {
             "p50_latency_delta_ms": p50_overhead_ms,
             "p95_latency_delta_ms": p95_overhead_ms,
-            "conflict_rate_percent": conflict_rate_pct
+            "conflict_rate_percent": conflict_rate_pct,
+            "throughput_delta_req_sec": throughput_delta
         },
         "error_distribution": {
             "successes": b_orders + p_orders,
             "replays": p_prevented,
             "conflicts": p_conflicts,
-            "timeouts": 0,
-            "server_errors": 0,
-            "connection_drops": 0,
-            "other_failures": 0
+            "timeouts": total_timeouts,
+            "server_errors": total_server_errors,
+            "connection_drops": total_connection_drops,
+            "other_failures": total_unexpected
         }
     }
 
@@ -108,9 +127,11 @@ def generate_csv_export(db: Session) -> str:
         "Duplicates",
         "Duplicates Prevented",
         "Conflicts",
+        "Failures",
         "False Positive Blocks",
         "p50 Latency (ms)",
-        "p95 Latency (ms)"
+        "p95 Latency (ms)",
+        "Throughput (req/sec)"
     ])
 
     for run in WORKLOAD_HISTORY:
@@ -125,9 +146,11 @@ def generate_csv_export(db: Session) -> str:
             run.get("duplicates", 0),
             run.get("duplicates_prevented", 0),
             run.get("conflicts", 0),
+            run.get("failures", 0),
             run.get("false_positive_blocks", 0),
             lat.get("p50_ms", 0.0),
-            lat.get("p95_ms", 0.0)
+            lat.get("p95_ms", 0.0),
+            run.get("throughput_req_sec", 0.0)
         ])
 
     return output.getvalue()

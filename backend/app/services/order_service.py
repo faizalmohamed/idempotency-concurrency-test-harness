@@ -1,4 +1,5 @@
 import json
+import time
 import uuid
 from typing import Dict, Any, Tuple, Optional
 from sqlalchemy.orm import Session
@@ -78,6 +79,34 @@ def create_protected_order(
     ).first()
 
     if existing_record:
+        if existing_record.status == "PROCESSING":
+            # Another in-flight request is actively processing this key
+            try:
+                audit_entry = AuditLog(
+                    order_id=existing_record.order_id,
+                    idempotency_key=idempotency_key,
+                    decision_type="RACE_LOCKED",
+                    actor=client_type,
+                    details=json.dumps({
+                        "reason": "In-flight request detected with key in PROCESSING state",
+                        "fingerprint": incoming_fingerprint
+                    })
+                )
+                db.add(audit_entry)
+                db.commit()
+            except Exception:
+                db.rollback()
+
+            # Wait briefly for in-flight transaction to finalize
+            retries = 10
+            while existing_record and existing_record.status == "PROCESSING" and retries > 0:
+                time.sleep(0.05)
+                db.expire_all()
+                existing_record = db.query(IdempotencyRecord).filter(
+                    IdempotencyRecord.idempotency_key == idempotency_key
+                ).first()
+                retries -= 1
+
         # Evaluate fingerprint against existing record
         if detect_duplicate(existing_record.request_fingerprint, incoming_fingerprint):
             # Duplicate / Retry -> Return original stored result
@@ -171,6 +200,33 @@ def create_protected_order(
             IdempotencyRecord.idempotency_key == idempotency_key
         ).first()
 
+        # Log RACE_LOCKED audit event
+        try:
+            audit_entry = AuditLog(
+                order_id=race_record.order_id if race_record else None,
+                idempotency_key=idempotency_key,
+                decision_type="RACE_LOCKED",
+                actor=client_type,
+                details=json.dumps({
+                    "reason": "Concurrent insertion race detected; key locked by another thread",
+                    "fingerprint": incoming_fingerprint
+                })
+            )
+            db.add(audit_entry)
+            db.commit()
+        except Exception:
+            db.rollback()
+
+        # Wait briefly for winning thread to complete transaction if still in PROCESSING
+        retries = 10
+        while race_record and race_record.status == "PROCESSING" and retries > 0:
+            time.sleep(0.05)
+            db.expire_all()
+            race_record = db.query(IdempotencyRecord).filter(
+                IdempotencyRecord.idempotency_key == idempotency_key
+            ).first()
+            retries -= 1
+
         if race_record and detect_duplicate(race_record.request_fingerprint, incoming_fingerprint):
             order = None
             if race_record.order_id:
@@ -178,3 +234,4 @@ def create_protected_order(
             return order, "RETRIED_AND_MATCHED", idempotency_key, True, 200
         else:
             return None, "BLOCKED_AS_CONFLICT", idempotency_key, False, 409
+

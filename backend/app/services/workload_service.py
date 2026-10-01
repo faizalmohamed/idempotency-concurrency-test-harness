@@ -91,13 +91,15 @@ def execute_single_worker_request(
         decision = "SIMULATED_FAILURE"
         if http_exc.status_code == 504:
             error_cat = "timeout"
+        elif http_exc.status_code == 500:
+            error_cat = "server_error"
         else:
             error_cat = "database_error"
     except ConnectionDropException:
         db.rollback()
         status_code = 503
         decision = "SIMULATED_FAILURE"
-        error_cat = "timeout"
+        error_cat = "connection_drop"
     except Exception as exc:
         db.rollback()
         status_code = 500
@@ -148,6 +150,8 @@ def run_workload_simulation(
     durations: List[float] = []
     results: List[Dict[str, Any]] = []
     error_counts = WorkloadErrorCounts()
+    batch_start = time.perf_counter()
+    legacy_count = 0
 
     with ThreadPoolExecutor(max_workers=min(concurrency, 64)) as executor:
         futures = []
@@ -159,6 +163,8 @@ def run_workload_simulation(
                 worker_payload["amount"] = float(base_payload.get("amount", 100.0)) + ((i + 1) * 10.0)
 
             is_legacy = (legacy_client_percentage > 0) and ((i / concurrency * 100.0) < legacy_client_percentage)
+            if is_legacy:
+                legacy_count += 1
 
             futures.append(
                 executor.submit(
@@ -182,13 +188,22 @@ def run_workload_simulation(
             if res["error_cat"]:
                 setattr(error_counts, res["error_cat"], getattr(error_counts, res["error_cat"]) + 1)
 
+    batch_duration_sec = max(0.001, time.perf_counter() - batch_start)
+
     created_order_ids = set()
     conflicts_count = 0
     replayed_count = 0
+    successful_count = 0
+    failures_count = 0
 
     for r in results:
         if r["order_id"]:
             created_order_ids.add(r["order_id"])
+        if r["status_code"] in (200, 201):
+            successful_count += 1
+        elif r["status_code"] >= 400 and r["status_code"] != 409:
+            failures_count += 1
+
         if r["decision"] == "RETRIED_AND_MATCHED":
             replayed_count += 1
         elif r["decision"] == "BLOCKED_AS_CONFLICT":
@@ -206,6 +221,7 @@ def run_workload_simulation(
         duplicates_prevented = max(0, total_requests - orders_created - conflicts_count)
 
     false_positive_blocks = 0
+    throughput = round(total_requests / batch_duration_sec, 2)
 
     latency = LatencyMetrics(
         p50_ms=calculate_percentile(durations, 50),
@@ -226,6 +242,12 @@ def run_workload_simulation(
         duplicates_prevented=duplicates_prevented,
         conflicts=conflicts_count,
         false_positive_blocks=false_positive_blocks,
+        successful_requests=successful_count,
+        failures=failures_count,
+        retries=replayed_count,
+        replay_count=replayed_count,
+        legacy_requests=legacy_count,
+        throughput_req_sec=throughput,
         latency=latency,
         errors=error_counts
     )

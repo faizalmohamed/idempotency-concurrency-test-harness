@@ -1,4 +1,5 @@
 import os
+import datetime
 import pytest
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fastapi.testclient import TestClient
@@ -388,4 +389,228 @@ def test_22_comparison_csv_export():
     assert res.status_code == 200
     assert res.headers["content-type"] == "text/csv; charset=utf-8"
     assert "Run ID,Timestamp,Mode" in res.text
+
+def test_23_audit_events_created_on_baseline_and_protected_orders():
+    """Verify audit events are created for baseline, protected, replay, and conflict."""
+    # Baseline
+    res_b = client.post("/orders", json={"customer_id": "C001", "product_id": "P100", "amount": 100.0})
+    assert res_b.status_code == 201
+
+    # Protected
+    key = "key-audit-phase5-test"
+    payload = {"customer_id": "C001", "product_id": "P100", "amount": 150.0}
+    res_p = client.post("/orders/v2", json=payload, headers={"Idempotency-Key": key})
+    assert res_p.status_code == 201
+
+    # Replay
+    res_r = client.post("/orders/v2", json=payload, headers={"Idempotency-Key": key})
+    assert res_r.status_code == 200
+
+    # Conflict
+    res_c = client.post("/orders/v2", json={"customer_id": "C001", "product_id": "P100", "amount": 999.0}, headers={"Idempotency-Key": key})
+    assert res_c.status_code == 409
+
+    # Verify audit logs contain all 4 decision types
+    logs = client.get("/audit-logs?limit=50").json()["items"]
+    decision_types = {l["decision_type"] for l in logs}
+    assert "NEW_ORDER_CREATED_BASELINE" in decision_types
+    assert "NEW_ORDER_CREATED_PROTECTED" in decision_types
+    assert "IDEMPOTENT_REPLAY" in decision_types
+    assert "PAYLOAD_CONFLICT" in decision_types
+
+def test_24_audit_filtering_pagination_and_order_details():
+    """Verify audit log filtering by decision, actor, key, pagination, and detail lookup."""
+    res_filt = client.get("/audit-logs?decision_type=PAYLOAD_CONFLICT")
+    assert res_filt.status_code == 200
+    data = res_filt.json()
+    assert all(item["decision_type"] == "PAYLOAD_CONFLICT" for item in data["items"])
+
+    res_actor = client.get("/audit-logs?actor=web")
+    assert res_actor.status_code == 200
+
+    # Test pagination
+    res_page = client.get("/audit-logs?limit=2&offset=0")
+    assert res_page.status_code == 200
+    assert len(res_page.json()["items"]) <= 2
+    assert res_page.json()["limit"] == 2
+    assert res_page.json()["offset"] == 0
+
+    # Test nonexistent log lookup (404)
+    res_404 = client.get("/audit-logs/999999")
+    assert res_404.status_code == 404
+
+def test_25_admin_purge_orders_only_and_keys_only():
+    """Verify selective purging of orders-only and idempotency-keys-only."""
+    # Create an order and protected key
+    client.post("/orders", json={"amount": 45.0})
+    client.post("/orders/v2", json={"amount": 55.0}, headers={"Idempotency-Key": "key-purge-target-test"})
+
+    # Purge orders only
+    res_o = client.post("/admin/purge", json={"target": "orders"})
+    assert res_o.status_code == 200
+    assert len(client.get("/orders").json()) == 0
+
+    # Purge idempotency keys only
+    res_k = client.post("/admin/purge", json={"target": "idempotency_keys"})
+    assert res_k.status_code == 200
+    assert res_k.json()["purged_records"] >= 0
+
+def test_26_admin_ttl_pruning_expired_vs_active():
+    """Verify TTL pruning removes records older than TTL and preserves active records."""
+    db = TestingSessionLocal()
+    now = datetime.datetime.utcnow()
+    expired_time = now - datetime.timedelta(hours=48)
+
+    rec_expired = IdempotencyRecord(
+        idempotency_key="key-ttl-expired-48h",
+        request_fingerprint="fp-expired",
+        status="COMPLETED",
+        created_at=expired_time
+    )
+    rec_active = IdempotencyRecord(
+        idempotency_key="key-ttl-active-now",
+        request_fingerprint="fp-active",
+        status="COMPLETED",
+        created_at=now
+    )
+    db.add(rec_expired)
+    db.add(rec_active)
+    db.commit()
+    db.close()
+
+    # Prune with TTL=24 hours
+    res = client.post("/admin/purge", json={"target": "expired_keys", "ttl_hours": 24})
+    assert res.status_code == 200
+    assert res.json()["purged_idempotency_records"] >= 1
+
+    # Verify active record still remains
+    db2 = TestingSessionLocal()
+    active_check = db2.query(IdempotencyRecord).filter(IdempotencyRecord.idempotency_key == "key-ttl-active-now").first()
+    assert active_check is not None
+    expired_check = db2.query(IdempotencyRecord).filter(IdempotencyRecord.idempotency_key == "key-ttl-expired-48h").first()
+    assert expired_check is None
+    db2.close()
+
+def test_27_manual_override_force_complete_and_audit():
+    """Verify manual key override with force_complete action creates MANUAL_OVERRIDE audit event."""
+    key = "key-force-complete-027"
+    client.post("/orders/v2", json={"amount": 77.0}, headers={"Idempotency-Key": key})
+
+    res = client.post("/admin/key-override", json={
+        "idempotency_key": key,
+        "action": "force_complete",
+        "reason": "Administrative race unlock"
+    })
+    assert res.status_code == 200
+    assert res.json()["status"] == "success"
+    assert res.json()["new_status"] == "COMPLETED"
+
+    # Verify MANUAL_OVERRIDE audit event was logged
+    audit_logs = client.get("/audit-logs?decision_type=MANUAL_OVERRIDE").json()["items"]
+    assert any(log["idempotency_key"] == key for log in audit_logs)
+
+    # Test nonexistent key 404
+    res_404 = client.post("/admin/key-override", json={"idempotency_key": "nonexistent-key-xyz", "action": "release"})
+    assert res_404.status_code == 404
+
+def test_28_retry_replay_after_simulated_500_and_timeout():
+    """Verify that retrying after simulated errors safely replays or creates without duplicates."""
+    key = "key-retry-sim-500"
+    payload = {"customer_id": "C001", "product_id": "P100", "amount": 125.0}
+
+    # First request succeeds and creates order
+    res1 = client.post("/orders/v2", json=payload, headers={"Idempotency-Key": key})
+    assert res1.status_code == 201
+    order_id = res1.json()["order"]["id"]
+
+    # Client simulates retry after network/server glitch
+    res2 = client.post("/orders/v2", json=payload, headers={"Idempotency-Key": key})
+    assert res2.status_code == 200
+    assert res2.json()["replayed"] is True
+    assert res2.json()["order"]["id"] == order_id
+
+    # Confirm exactly 1 order exists for this key
+    orders = [o for o in client.get("/orders").json() if o["idempotency_key"] == key]
+    assert len(orders) == 1
+
+def test_29_connection_drop_and_failure_rate_calculation():
+    """Verify connection-drop simulation and failure rate calculation in workload runner."""
+    from app.services.failure_service import inject_failure_if_configured, ConnectionDropException
+    from fastapi import HTTPException
+
+    # Test deterministic failure injection function
+    with pytest.raises(ConnectionDropException):
+        inject_failure_if_configured(failure_type="connection_drop", failure_rate_percent=100.0, worker_index=0)
+
+    with pytest.raises(HTTPException) as exc_504:
+        inject_failure_if_configured(failure_type="timeout", failure_rate_percent=100.0, worker_index=0)
+    assert exc_504.value.status_code == 504
+
+    with pytest.raises(HTTPException) as exc_500:
+        inject_failure_if_configured(failure_type="server_error", failure_rate_percent=100.0, worker_index=0)
+    assert exc_500.value.status_code == 500
+
+    # Run workload with connection drop
+    req = {
+        "mode": "protected",
+        "concurrency": 5,
+        "failure_rate_percent": 100.0,
+        "failure_type": "connection_drop"
+    }
+    res = client.post("/test/run", json=req)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["errors"]["connection_drop"] > 0
+    assert data["failures"] > 0
+
+def test_30_legacy_client_fallback_and_distinct_requests():
+    """Verify legacy client fallback creates distinct orders without false-positive duplicate blocking."""
+    p1 = {"customer_id": "C001", "product_id": "P101", "amount": 10.0, "client_type": "legacy"}
+    p2 = {"customer_id": "C001", "product_id": "P102", "amount": 20.0, "client_type": "legacy"}
+
+    # Legacy clients do not send Idempotency-Key
+    res1 = client.post("/orders", json=p1)
+    res2 = client.post("/orders", json=p2)
+
+    assert res1.status_code == 201
+    assert res2.status_code == 201
+    assert res1.json()["id"] != res2.json()["id"]
+
+    # Verify both orders exist
+    orders = client.get("/orders").json()
+    assert any(o["id"] == res1.json()["id"] for o in orders)
+    assert any(o["id"] == res2.json()["id"] for o in orders)
+
+def test_31_comparison_export_unsupported_format_rejection():
+    """Verify GET /comparison/export accepts csv and rejects unsupported formats with HTTP 400."""
+    res_ok = client.get("/comparison/export?format=csv")
+    assert res_ok.status_code == 200
+
+    res_bad = client.get("/comparison/export?format=xml")
+    assert res_bad.status_code == 400
+    assert "Unsupported export format" in res_bad.json()["detail"]
+
+def test_32_concurrent_race_locked_audit_event():
+    """Verify concurrent race creates RACE_LOCKED audit events."""
+    payload = {"customer_id": "C001", "product_id": "P100", "amount": 300.0}
+    key = "key-race-locked-audit-test"
+
+    def send_req():
+        return client.post("/orders/v2", json=payload, headers={"Idempotency-Key": key})
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(send_req) for _ in range(10)]
+        results = [f.result() for f in as_completed(futures)]
+
+    assert len(results) == 10
+    # Exactly 1 order created in DB
+    orders = [o for o in client.get("/orders").json() if o["idempotency_key"] == key]
+    assert len(orders) == 1
+
+    # Check audit logs for RACE_LOCKED
+    audit_logs = client.get(f"/audit-logs?idempotency_key={key}").json()["items"]
+    decisions = [l["decision_type"] for l in audit_logs]
+    assert "NEW_ORDER_CREATED_PROTECTED" in decisions
+    assert "RACE_LOCKED" in decisions
+
 

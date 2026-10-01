@@ -335,8 +335,16 @@ def get_comparison_analytics(db: Session = Depends(get_db)):
     return generate_comparison_report(db)
 
 @app.get("/comparison/export", tags=["Reporting & Comparison"])
-def export_comparison_csv(db: Session = Depends(get_db)):
+def export_comparison_csv(
+    format: str = Query("csv", description="Export format: 'csv'"),
+    db: Session = Depends(get_db)
+):
     """Export benchmark test results as downloadable CSV data."""
+    if format.lower() != "csv":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported export format '{format}'. Supported formats: 'csv'"
+        )
     csv_content = generate_csv_export(db)
     return Response(
         content=csv_content,

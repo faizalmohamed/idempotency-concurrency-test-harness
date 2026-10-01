@@ -67,6 +67,7 @@ class AuditLogSchema(BaseModel):
     decision_type: str
     actor: str
     details: Optional[str] = None
+    order: Optional[OrderResponse] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -135,6 +136,8 @@ class WorkloadErrorCounts(BaseModel):
     duplicate: int = 0
     conflict: int = 0
     timeout: int = 0
+    server_error: int = 0
+    connection_drop: int = 0
     database_error: int = 0
     concurrency_error: int = 0
     unexpected_error: int = 0
@@ -150,6 +153,12 @@ class WorkloadTestResponse(BaseModel):
     duplicates_prevented: int
     conflicts: int
     false_positive_blocks: int
+    successful_requests: int = 0
+    failures: int = 0
+    retries: int = 0
+    replay_count: int = 0
+    legacy_requests: int = 0
+    throughput_req_sec: float = 0.0
     latency: LatencyMetrics
     errors: WorkloadErrorCounts
 
@@ -163,3 +172,4 @@ class SystemMetricsResponse(BaseModel):
     conflicts: int
     false_positive_blocks: int
     manual_overrides: int
+
